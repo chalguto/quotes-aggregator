@@ -1,0 +1,184 @@
+{
+  "servicebus": {
+    "namespace": {
+      "name": "sb-quotes-aggregator-prod",
+      "sku": "Premium",
+      "location": "eastus2",
+      "zoneRedundant": true,
+      "minimumTlsVersion": "1.2",
+      "capacityUnits": 1,
+      "tags": {
+        "environment": "production",
+        "project": "quotes-aggregator",
+        "team": "backend"
+      }
+    },
+    "topics": [
+      {
+        "name": "quotes.issued",
+        "description": "Topic for QuoteIssued domain events",
+        "properties": {
+          "defaultMessageTimeToLive": "P7D",
+          "maxSizeInMegabytes": 5120,
+          "enablePartitioning": false,
+          "supportOrdering": true,
+          "requiresDuplicateDetection": true,
+          "duplicateDetectionHistoryTimeWindow": "PT30M",
+          "enableBatchedOperations": true,
+          "autoDeleteOnIdle": "P365D"
+        },
+        "subscriptions": [
+          {
+            "name": "sub-notification-service",
+            "description": "Notification service consumes QuoteIssued to send emails",
+            "properties": {
+              "maxDeliveryCount": 10,
+              "lockDuration": "PT5M",
+              "deadLetteringOnMessageExpiration": true,
+              "deadLetteringOnFilterEvaluationExceptions": true,
+              "defaultMessageTimeToLive": "P7D",
+              "enableBatchedOperations": true
+            },
+            "filters": [
+              {
+                "name": "approved-quotes-only",
+                "type": "SqlFilter",
+                "sqlExpression": "data.status = 'APPROVED'"
+              }
+            ]
+          },
+          {
+            "name": "sub-policy-service",
+            "description": "Policy service creates policy records from APPROVED quotes",
+            "properties": {
+              "maxDeliveryCount": 5,
+              "lockDuration": "PT10M",
+              "deadLetteringOnMessageExpiration": true,
+              "deadLetteringOnFilterEvaluationExceptions": true,
+              "defaultMessageTimeToLive": "P14D",
+              "enableBatchedOperations": false
+            },
+            "filters": [
+              {
+                "name": "approved-only",
+                "type": "SqlFilter",
+                "sqlExpression": "data.status = 'APPROVED'"
+              }
+            ]
+          },
+          {
+            "name": "sub-audit-service",
+            "description": "Audit service receives ALL quote events for compliance logging",
+            "properties": {
+              "maxDeliveryCount": 20,
+              "lockDuration": "PT2M",
+              "deadLetteringOnMessageExpiration": true,
+              "deadLetteringOnFilterEvaluationExceptions": false,
+              "defaultMessageTimeToLive": "P30D",
+              "enableBatchedOperations": true
+            },
+            "filters": []
+          }
+        ]
+      },
+      {
+        "name": "quotes.dlq-reprocessing",
+        "description": "Topic for monitoring and reprocessing dead-letter messages",
+        "properties": {
+          "defaultMessageTimeToLive": "P30D",
+          "maxSizeInMegabytes": 1024,
+          "enablePartitioning": false,
+          "requiresDuplicateDetection": false
+        },
+        "subscriptions": [
+          {
+            "name": "sub-ops-team",
+            "description": "Operations team monitors dead-letter queue",
+            "properties": {
+              "maxDeliveryCount": 1,
+              "lockDuration": "PT5M",
+              "deadLetteringOnMessageExpiration": false
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "messageProperties": {
+    "standard": {
+      "contentType": "application/json;schema=QuoteIssued/v1",
+      "userProperties": {
+        "eventType": "com.example.quotes.QuoteIssued",
+        "eventVersion": "1.0",
+        "source": "quotes-aggregator",
+        "correlationId": "<X-Request-ID from HTTP request>",
+        "idempotencyKey": "<Idempotency-Key from HTTP request>",
+        "documentType": "<quote documentType for routing>"
+      }
+    }
+  },
+  "security": {
+    "authorizationRules": [
+      {
+        "name": "quotes-aggregator-send",
+        "rights": ["Send"],
+        "description": "Used by quotes-aggregator service to publish messages"
+      },
+      {
+        "name": "notification-service-listen",
+        "rights": ["Listen"],
+        "description": "Used by notification service"
+      },
+      {
+        "name": "policy-service-listen",
+        "rights": ["Listen"],
+        "description": "Used by policy service"
+      },
+      {
+        "name": "audit-service-listen",
+        "rights": ["Listen"],
+        "description": "Used by audit service"
+      },
+      {
+        "name": "ops-manage",
+        "rights": ["Manage", "Listen", "Send"],
+        "description": "Operations team for monitoring and DLQ handling"
+      }
+    ],
+    "managedIdentity": {
+      "enabled": true,
+      "description": "Prefer Managed Identity (Workload Identity on AKS) over SAS tokens"
+    }
+  },
+  "monitoring": {
+    "diagnosticSettings": {
+      "enabled": true,
+      "logs": [
+        "OperationalLogs",
+        "VNetAndIPFilteringLogs"
+      ],
+      "metrics": [
+        "AllMetrics"
+      ],
+      "destination": "Log Analytics Workspace"
+    },
+    "alerts": [
+      {
+        "name": "DLQMessageCountAlert",
+        "description": "Alert when dead-letter messages exceed threshold",
+        "metric": "DeadLetteredMessageCount",
+        "threshold": 10,
+        "windowSize": "PT5M",
+        "severity": 1
+      },
+      {
+        "name": "ActiveMessageCountAlert",
+        "description": "Alert when message backlog is too high (potential consumer lag)",
+        "metric": "ActiveMessageCount",
+        "threshold": 1000,
+        "windowSize": "PT10M",
+        "severity": 2
+      }
+    ]
+  }
+}

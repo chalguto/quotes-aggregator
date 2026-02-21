@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: quotes-aggregator
+  namespace: quotes
+  labels:
+    app: quotes-aggregator
+spec:
+  type: ClusterIP
+  selector:
+    app: quotes-aggregator
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

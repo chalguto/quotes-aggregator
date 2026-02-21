@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quotes-aggregator-config
+  namespace: quotes
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  RATE_LIMIT_MAX: "100"
+  CB_TIMEOUT: "3000"
+  CB_ERROR_THRESHOLD: "50"
+  CB_RESET_TIMEOUT: "30000"
+  CB_VOLUME_THRESHOLD: "5"
+  IDEMPOTENCY_TTL: "86400"
+  REDIS_URL: "redis://redis-service:6379"

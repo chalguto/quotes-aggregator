@@ -1,0 +1,164 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://api.example.com/schemas/events/QuoteIssued/v1.json",
+  "title": "QuoteIssued",
+  "description": "Event emitted when a new insurance quote is successfully created and approved.",
+  "type": "object",
+  "required": [
+    "eventId",
+    "eventType",
+    "eventVersion",
+    "correlationId",
+    "timestamp",
+    "source",
+    "data"
+  ],
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this event instance (UUID v4)",
+      "example": "550e8400-e29b-41d4-a716-446655440000"
+    },
+    "eventType": {
+      "type": "string",
+      "const": "com.example.quotes.QuoteIssued",
+      "description": "Fully-qualified event type identifier"
+    },
+    "eventVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "Schema version in major.minor format",
+      "example": "1.0"
+    },
+    "correlationId": {
+      "type": "string",
+      "description": "Correlation ID to trace the request across services",
+      "example": "req-abc123"
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Original Idempotency-Key from the HTTP request"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the event was produced",
+      "example": "2026-02-20T10:30:00.000Z"
+    },
+    "source": {
+      "type": "string",
+      "description": "Service that produced the event",
+      "example": "quotes-aggregator"
+    },
+    "data": {
+      "type": "object",
+      "description": "Event payload with quote details",
+      "required": [
+        "quoteId",
+        "documentId",
+        "documentType",
+        "insuredName",
+        "insuredEmail",
+        "coverageAmount",
+        "currency",
+        "premium",
+        "status",
+        "effectiveDate",
+        "expiryDate"
+      ],
+      "properties": {
+        "quoteId": {
+          "type": "string",
+          "description": "Unique identifier for the quote",
+          "example": "q-550e8400a716"
+        },
+        "documentId": {
+          "type": "string",
+          "description": "Document/policy identifier",
+          "example": "DOC-123456"
+        },
+        "documentType": {
+          "type": "string",
+          "enum": ["AUTO", "HOME", "LIFE", "HEALTH", "TRAVEL"],
+          "description": "Type of insurance product"
+        },
+        "insuredName": {
+          "type": "string",
+          "description": "Full name of the insured person"
+        },
+        "insuredEmail": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address of the insured person"
+        },
+        "coverageAmount": {
+          "type": "number",
+          "minimum": 0.01,
+          "description": "Coverage amount"
+        },
+        "premium": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Calculated premium amount"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "ISO 4217 currency code"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["APPROVED", "PENDING", "REJECTED"],
+          "description": "Quote approval status"
+        },
+        "effectiveDate": {
+          "type": "string",
+          "format": "date",
+          "description": "Coverage start date"
+        },
+        "expiryDate": {
+          "type": "string",
+          "format": "date",
+          "description": "Coverage end date"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Additional document-type-specific metadata"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "eventId": "550e8400-e29b-41d4-a716-446655440000",
+      "eventType": "com.example.quotes.QuoteIssued",
+      "eventVersion": "1.0",
+      "correlationId": "req-abc123",
+      "idempotencyKey": "a716-550e8400-e29b-41d4-446655440000",
+      "timestamp": "2026-02-20T10:30:00.000Z",
+      "source": "quotes-aggregator",
+      "data": {
+        "quoteId": "q-550e8400a716",
+        "documentId": "DOC-123456",
+        "documentType": "AUTO",
+        "insuredName": "John Doe",
+        "insuredEmail": "john.doe@example.com",
+        "coverageAmount": 50000.00,
+        "premium": 1250.00,
+        "currency": "USD",
+        "status": "APPROVED",
+        "effectiveDate": "2026-03-01",
+        "expiryDate": "2027-03-01",
+        "metadata": {
+          "vehicleYear": 2022,
+          "vehicleMake": "Toyota"
+        }
+      }
+    }
+  ]
+}

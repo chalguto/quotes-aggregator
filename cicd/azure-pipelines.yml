@@ -1,0 +1,297 @@
+# ─── Azure DevOps Pipeline ─────────────────────────────────────────────────────
+# Quotes Aggregator Service - CI/CD Pipeline
+# Stages: Build → Test → Container Build → Integration Tests → Deploy (on main)
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+      - hotfix/*
+  paths:
+    exclude:
+      - '**/*.md'
+      - 'docs/**'
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  # General
+  SERVICE_DIR: 'service'
+  DOCKER_REGISTRY: '$(ACR_NAME).azurecr.io'
+  IMAGE_NAME: 'quotes-aggregator'
+  IMAGE_TAG: '$(Build.BuildId)'
+  FULL_IMAGE: '$(DOCKER_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)'
+  K8S_NAMESPACE: 'quotes'
+
+  # Derived from Build
+  IS_MAIN: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
+  IS_DEVELOP: $[eq(variables['Build.SourceBranch'], 'refs/heads/develop')]
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  # ─── Stage 1: Build & Lint ───────────────────────────────────────────────────
+  - stage: Build
+    displayName: 'Build & Lint'
+    jobs:
+      - job: BuildJob
+        displayName: 'Install, Lint & Compile'
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+            displayName: 'Install Node.js 20'
+
+          - script: |
+              cd $(SERVICE_DIR)
+              npm ci
+            displayName: 'Install dependencies'
+
+          - script: |
+              cd $(SERVICE_DIR)
+              npm run lint || true
+            displayName: 'Lint source code'
+            continueOnError: true
+
+          - script: |
+              cd $(SERVICE_DIR)
+              npm run build
+            displayName: 'Compile TypeScript'
+
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: '$(SERVICE_DIR)'
+              Contents: '**'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)/service'
+            displayName: 'Copy service files to artifact'
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'service-artifact'
+            displayName: 'Publish build artifact'
+
+  # ─── Stage 2: Unit Tests ─────────────────────────────────────────────────────
+  - stage: Test
+    displayName: 'Unit Tests & Coverage'
+    dependsOn: Build
+    jobs:
+      - job: TestJob
+        displayName: 'Run Vitest tests'
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+            displayName: 'Install Node.js 20'
+
+          - script: |
+              cd $(SERVICE_DIR)
+              npm ci
+            displayName: 'Install dependencies'
+
+          - script: |
+              cd $(SERVICE_DIR)
+              npm run test:coverage -- --reporter=verbose --reporter=junit --outputFile.junit=junit.xml
+            displayName: 'Run unit tests with coverage'
+            env:
+              CI: true
+              NODE_ENV: test
+              DEV_API_TOKEN: test-token
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '$(SERVICE_DIR)/junit.xml'
+              mergeTestResults: true
+              failTaskOnFailedTests: true
+            displayName: 'Publish test results'
+            condition: always()
+
+          - task: PublishCodeCoverageResults@1
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: '$(SERVICE_DIR)/coverage/cobertura-coverage.xml'
+              reportDirectory: '$(SERVICE_DIR)/coverage'
+            displayName: 'Publish code coverage'
+            condition: always()
+
+  # ─── Stage 3: Container Build & Push ─────────────────────────────────────────
+  - stage: ContainerBuild
+    displayName: 'Container Build & Push'
+    dependsOn: Test
+    jobs:
+      - job: DockerBuildPush
+        displayName: 'Build & push Docker image to ACR'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Login to Azure Container Registry'
+            inputs:
+              azureSubscription: '$(AZURE_SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az acr login --name $(ACR_NAME)
+
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: build
+              buildContext: '$(SERVICE_DIR)'
+              Dockerfile: '$(SERVICE_DIR)/Dockerfile'
+              repository: '$(DOCKER_REGISTRY)/$(IMAGE_NAME)'
+              tags: |
+                $(IMAGE_TAG)
+                latest
+              arguments: '--target production --no-cache'
+
+          - script: |
+              docker run --rm \
+                -e NODE_ENV=test \
+                -e DEV_API_TOKEN=test-token \
+                $(DOCKER_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) \
+                node --check dist/main.js && echo 'Smoke test passed'
+            displayName: 'Smoke test container'
+            continueOnError: false
+
+          - task: Docker@2
+            displayName: 'Push Docker image to ACR'
+            inputs:
+              command: push
+              repository: '$(DOCKER_REGISTRY)/$(IMAGE_NAME)'
+              tags: |
+                $(IMAGE_TAG)
+                latest
+
+          - script: |
+              echo "##vso[task.setvariable variable=FULL_IMAGE;isOutput=true]$(FULL_IMAGE)"
+              echo "Image pushed: $(FULL_IMAGE)"
+            name: setImageVar
+            displayName: 'Export image reference as variable'
+
+  # ─── Stage 4: Integration Tests ──────────────────────────────────────────────
+  - stage: IntegrationTest
+    displayName: 'Integration Tests'
+    dependsOn: ContainerBuild
+    jobs:
+      - job: IntegrationJob
+        displayName: 'Run integration tests against containerised service'
+        services:
+          quotes_service:
+            image: $(DOCKER_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+            ports:
+              - '3000:3000'
+            env:
+              NODE_ENV: integration
+              DEV_API_TOKEN: int-test-token
+              LOG_LEVEL: warn
+            options: '--health-cmd "wget -q --spider http://localhost:3000/health" --health-interval 5s --health-timeout 3s --health-retries 5'
+
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '20.x'
+            displayName: 'Install Node.js 20'
+
+          - script: |
+              cd $(SERVICE_DIR)
+              npm ci
+            displayName: 'Install dependencies'
+
+          - script: |
+              # Wait until service is ready
+              for i in {1..20}; do
+                curl -sf http://localhost:3000/health && break
+                echo "Waiting for service... attempt $i"
+                sleep 3
+              done
+            displayName: 'Wait for service to be ready'
+
+          - script: |
+              cd $(SERVICE_DIR)
+              # Run integration-specific tests
+              npx vitest run --reporter=junit --outputFile.junit=junit.xml \
+                --testPathPattern="integration"
+            displayName: 'Run integration tests'
+            env:
+              NODE_ENV: integration
+              BASE_URL: http://localhost:3000
+              DEV_API_TOKEN: int-test-token
+            continueOnError: true
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '$(SERVICE_DIR)/junit.xml'
+              testRunTitle: 'Integration Tests'
+            displayName: 'Publish integration test results'
+            condition: always()
+
+  # ─── Stage 5: Deploy to AKS (only on main branch) ────────────────────────────
+  - stage: DeployProduction
+    displayName: 'Deploy to AKS Production'
+    dependsOn: IntegrationTest
+    condition: and(succeeded(), eq(variables.IS_MAIN, 'true'))
+    jobs:
+      - deployment: DeployAKS
+        displayName: 'Rolling deployment to AKS'
+        environment: 'production'      # Gates and approvals configured in Azure DevOps UI
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: 'Get AKS credentials'
+                  inputs:
+                    azureSubscription: '$(AZURE_SERVICE_CONNECTION)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az aks get-credentials \
+                        --resource-group $(AKS_RESOURCE_GROUP) \
+                        --name $(AKS_CLUSTER_NAME) \
+                        --overwrite-existing
+
+                - task: Kubernetes@1
+                  displayName: 'Apply Kubernetes manifests'
+                  inputs:
+                    connectionType: 'KubernetesServiceConnection'
+                    kubernetesServiceEndpoint: '$(K8S_SERVICE_CONNECTION)'
+                    namespace: '$(K8S_NAMESPACE)'
+                    command: 'apply'
+                    arguments: '-f ../k8s/'
+                    checkLatest: true
+
+                - task: Kubernetes@1
+                  displayName: 'Update container image'
+                  inputs:
+                    connectionType: 'KubernetesServiceConnection'
+                    kubernetesServiceEndpoint: '$(K8S_SERVICE_CONNECTION)'
+                    namespace: '$(K8S_NAMESPACE)'
+                    command: 'set'
+                    arguments: >
+                      image deployment/quotes-aggregator
+                      quotes-aggregator=$(FULL_IMAGE)
+
+                - task: Kubernetes@1
+                  displayName: 'Verify rollout'
+                  inputs:
+                    connectionType: 'KubernetesServiceConnection'
+                    kubernetesServiceEndpoint: '$(K8S_SERVICE_CONNECTION)'
+                    namespace: '$(K8S_NAMESPACE)'
+                    command: 'rollout'
+                    arguments: 'status deployment/quotes-aggregator --timeout=5m'
+
+                - script: |
+                    echo "Deployment completed successfully"
+                    echo "Image: $(FULL_IMAGE)"
+                    echo "Build: $(Build.BuildId)"
+                    echo "Commit: $(Build.SourceVersion)"
+                  displayName: 'Log deployment info'

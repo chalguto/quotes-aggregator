@@ -1,0 +1,397 @@
+openapi: 3.0.3
+info:
+  title: Quotes Aggregator API
+  description: |
+    API for creating and managing insurance/financial quotes.
+    Supports idempotency, validation, and JWT-based security.
+  version: 1.0.0
+  contact:
+    name: Backend Team
+    email: backend@example.com
+
+servers:
+  - url: https://api.example.com/api/v1
+    description: Production
+  - url: https://staging-api.example.com/api/v1
+    description: Staging
+  - url: http://localhost:3000/api/v1
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+paths:
+  /quotes:
+    post:
+      summary: Create a new quote
+      description: |
+        Creates a new quote for the given document. Supports idempotency via
+        the `Idempotency-Key` header. If the same key is sent twice, the cached
+        response is returned without reprocessing.
+      operationId: createQuote
+      tags:
+        - Quotes
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: |
+            Client-generated unique key (UUID v4) to ensure idempotency.
+            Requests with the same key within 24 hours return the cached response.
+          schema:
+            type: string
+            format: uuid
+            example: "550e8400-e29b-41d4-a716-446655440000"
+        - name: X-Request-ID
+          in: header
+          required: false
+          description: Optional request trace identifier.
+          schema:
+            type: string
+            example: "req-abc123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuoteRequest'
+            examples:
+              auto_insurance:
+                summary: Auto insurance quote
+                value:
+                  documentId: "DOC-123456"
+                  documentType: "AUTO"
+                  insuredName: "John Doe"
+                  insuredEmail: "john.doe@example.com"
+                  coverageAmount: 50000.00
+                  currency: "USD"
+                  effectiveDate: "2026-03-01"
+                  expiryDate: "2027-03-01"
+                  metadata:
+                    vehicleYear: 2022
+                    vehicleMake: "Toyota"
+                    vehicleModel: "Camry"
+      responses:
+        "201":
+          description: Quote created successfully
+          headers:
+            Location:
+              description: URL of the created quote
+              schema:
+                type: string
+                example: "/api/v1/quotes/q-550e8400"
+            X-Idempotency-Result:
+              description: Indicates if this is a cached or new response
+              schema:
+                type: string
+                enum: [created, cached]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: 400
+                error: "Validation Error"
+                message: "Request body validation failed"
+                details:
+                  - field: "documentId"
+                    message: "documentId is required"
+        "401":
+          description: Unauthorized - missing or invalid Bearer token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Conflict - quote already exists for this documentId
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "422":
+          description: Unprocessable entity - business rule violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: Too many requests
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                example: 60
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Service unavailable (circuit breaker open)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /quotes/{quoteId}:
+    get:
+      summary: Get a quote by ID
+      operationId: getQuote
+      tags:
+        - Quotes
+      parameters:
+        - name: quoteId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "q-550e8400"
+      responses:
+        "200":
+          description: Quote found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+        "404":
+          description: Quote not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      summary: Health check endpoint
+      operationId: healthCheck
+      tags:
+        - Operations
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /metrics:
+    get:
+      summary: Prometheus metrics endpoint
+      operationId: getMetrics
+      tags:
+        - Operations
+      security: []
+      responses:
+        "200":
+          description: Prometheus metrics in text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT token obtained from the authentication service.
+        Include as: `Authorization: Bearer <token>`
+
+  schemas:
+    CreateQuoteRequest:
+      type: object
+      required:
+        - documentId
+        - documentType
+        - insuredName
+        - insuredEmail
+        - coverageAmount
+        - currency
+        - effectiveDate
+        - expiryDate
+      properties:
+        documentId:
+          type: string
+          description: Unique identifier for the document/policy
+          minLength: 3
+          maxLength: 100
+          pattern: '^[A-Z0-9\-]+$'
+          example: "DOC-123456"
+        documentType:
+          type: string
+          description: Type of insurance document
+          enum: [AUTO, HOME, LIFE, HEALTH, TRAVEL]
+          example: "AUTO"
+        insuredName:
+          type: string
+          description: Full name of the insured person
+          minLength: 2
+          maxLength: 200
+          example: "John Doe"
+        insuredEmail:
+          type: string
+          format: email
+          description: Email address of the insured person
+          example: "john.doe@example.com"
+        coverageAmount:
+          type: number
+          format: double
+          description: Coverage amount in the specified currency
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 10000000
+          example: 50000.00
+        currency:
+          type: string
+          description: ISO 4217 currency code
+          pattern: '^[A-Z]{3}$'
+          example: "USD"
+        effectiveDate:
+          type: string
+          format: date
+          description: Date when coverage starts (ISO 8601)
+          example: "2026-03-01"
+        expiryDate:
+          type: string
+          format: date
+          description: Date when coverage ends (ISO 8601)
+          example: "2027-03-01"
+        metadata:
+          type: object
+          description: Additional metadata specific to the document type
+          additionalProperties: true
+          example:
+            vehicleYear: 2022
+            vehicleMake: "Toyota"
+
+    QuoteResponse:
+      type: object
+      properties:
+        quoteId:
+          type: string
+          description: Unique identifier for the quote
+          example: "q-550e8400-e29b-41d4-a716"
+        documentId:
+          type: string
+          example: "DOC-123456"
+        documentType:
+          type: string
+          enum: [AUTO, HOME, LIFE, HEALTH, TRAVEL]
+        insuredName:
+          type: string
+          example: "John Doe"
+        insuredEmail:
+          type: string
+          format: email
+        coverageAmount:
+          type: number
+          format: double
+          example: 50000.00
+        currency:
+          type: string
+          example: "USD"
+        effectiveDate:
+          type: string
+          format: date
+        expiryDate:
+          type: string
+          format: date
+        premium:
+          type: number
+          format: double
+          description: Calculated premium amount
+          example: 1250.00
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED, EXPIRED]
+          example: "APPROVED"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-02-20T10:30:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-02-20T10:30:15Z"
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 400
+        error:
+          type: string
+          example: "Validation Error"
+        message:
+          type: string
+          example: "Request body validation failed"
+        requestId:
+          type: string
+          example: "req-abc123"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-02-20T10:30:00Z"
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          example: "healthy"
+        version:
+          type: string
+          example: "1.0.0"
+        uptime:
+          type: number
+          description: Uptime in seconds
+          example: 3600
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [up, down]
+            cache:
+              type: string
+              enum: [up, down]
+            circuitBreaker:
+              type: string
+              enum: [closed, open, half-open]
+
+tags:
+  - name: Quotes
+    description: Quote management operations
+  - name: Operations
+    description: Service operational endpoints

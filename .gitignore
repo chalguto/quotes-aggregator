@@ -1,0 +1,113 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Production build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+*.lcov
+lcov-report/
+.nyc_output/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-workspace
+*.sublime-project
+.vim/
+.netrwhist
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Runtime logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes config
+kubeconfig
+*.kubeconfig
+
+# OS
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporal files
+*.tmp
+*.bak
+*.swp
+.tmp/
+temp/
+tmp/
+
+# Local configuration files
+local.conf
+.local/
+*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.sql.bak
+
+# Performance & profiling
+*.perf
+profile.txt
+trace.log
+
+# Security
+.ssh/
+*.pem
+*.key
+private/
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# Python (if applicable)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+ENV/
+
+# Node-related
+.npm
+.eslintcache
+.node_repl_history
+*.tgz
+
+# Misc
+.cache/
+dist-ssr/
+*.egg-info/
